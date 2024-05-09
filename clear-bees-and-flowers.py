@@ -1,6 +1,7 @@
 import bpy
 
 
+# Remove all objects that are duplicates of the keep_names objects
 def cleanup_objects(keep_names):
     to_remove = []
     for obj in bpy.data.objects:
@@ -16,8 +17,7 @@ def cleanup_objects(keep_names):
 
 
 # Initial cleanup to remove existing duplicates
-# cleanup_objects(["Bee", "Flower"])
-cleanup_objects(["Bee"])
+cleanup_objects(["Bee", "Flower"])
 default_animated_items = ["Bee", "Flower", "Pod"]
 for item in default_animated_items:
     obj = bpy.data.objects.get(item)

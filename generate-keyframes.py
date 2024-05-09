@@ -145,17 +145,13 @@ class Bee(BaseObject):
     def __init__(self, object):
         global bee_count
         object.location = hive.location.copy() + random_velocity()
-
         super(Bee, self).__init__(object, bee_count)
         bee_count += 1
-        self.clear_animation_data()
-        self.speed = BEE_SPEED
+
         self.obj.rotation_euler = (0, 0, 0)
-        self.global_best_flower = None
-        self.global_best = float("inf")
-        self.previous_personal_best_flower = None
-        self.personal_best_flower = None
-        self.personal_best = float("inf")
+        self.clear_animation_data()
+        self.reset_personal_best()
+        self.reset_global_best()
         self.velocity = Vector(
             (
                 random.uniform(-0.5, 0.5),
@@ -164,11 +160,11 @@ class Bee(BaseObject):
             )
         ).normalized()
 
-        self.is_attached = False
+        self.is_attached: bool = False
         self.action: Literal["leaving-hive", "swarming", "returning-to-hive"] = (
             "leaving-hive"
         )
-        self.is_returned_to_hive = False
+        self.is_returned_to_hive: bool = False
 
     def transition_action(self):
         if self.action == "leaving-hive":
@@ -180,19 +176,15 @@ class Bee(BaseObject):
             self.velocity = (hive.location - self.pos).normalized()
             self.action = "returning-to-hive"
 
-    # Set velocity
-    def set_velocity(self, new_velocity):
-        if isinstance(new_velocity, Vector):
-            self.velocity = new_velocity.normalized()
-        else:
-            self.velocity = Vector(new_velocity).normalized()
-
     # Update positioning using Particle Swarm Optimization (PSO)
     def update(self, bees: list["Bee"], flowers: list["Flower"]):
 
+        # If swarming, detect nearby flowers and bees
         if self.action == "swarming":
             self.pollinate_nearby_flowers(flowers)
             self.detect_nearby_bees(bees)
+
+        # If returning to hive, stop the bee if it has reached the hive
         elif self.action == "returning-to-hive":
             if self.is_returned_to_hive:
                 return
@@ -202,7 +194,7 @@ class Bee(BaseObject):
 
         # Update location
         self.calculate_position()
-        self.avoid_walls()
+        self.handle_boundaries()
         self.obj.location = self.pos
 
         # Insert keyframe
@@ -217,7 +209,7 @@ class Bee(BaseObject):
             self._set_rotation(velocity)
 
     # Set rotation based on starting position
-    def _set_rotation(self, direction):
+    def _set_rotation(self, direction: Vector):
         forward_vector = Vector((1, 0, 0))
         direction_vector = direction.normalized()
         rotation_quaternion = forward_vector.rotation_difference(direction_vector)
@@ -226,7 +218,7 @@ class Bee(BaseObject):
         self.obj.keyframe_insert(data_path="rotation_quaternion")
 
     # Bounce off of walls based on Bee position bounds
-    def avoid_walls(self):
+    def handle_boundaries(self):
         for axis in ["x", "y", "z"]:
             min_pos, max_pos = BEE_POSITION_BOUNDS[axis]
             pos = getattr(self.pos, axis)
@@ -295,20 +287,25 @@ class Bee(BaseObject):
         self.velocity = new_velocity.normalized()
         self.pos += self.velocity * BEE_SPEED
 
+    # Set personal best to default value
     def reset_personal_best(self):
         self.is_attached = False
         self.personal_best = float("inf")
         self.personal_best_flower = None
+        self.previous_personal_best_flower = None
 
+    # Set global best to default value
     def reset_global_best(self):
         self.is_attached = False
         self.global_best = float("inf")
         self.global_best_flower = None
 
+    # Reset the current target of the bee
     def reset_motive(self):
         self.reset_personal_best()
         self.velocity = random_velocity()
 
+    # Attempt to pollinate nearby flowesr
     def pollinate_nearby_flowers(self, flowers: list["Flower"]):
 
         # Search for the nearest flower
@@ -337,6 +334,7 @@ class Bee(BaseObject):
         if self.personal_best_flower is None:
             return
 
+        # If a new best flower has been found, detach from the previous one if necessary
         if (
             self.previous_personal_best_flower is not None
             and self.personal_best_flower.id != self.previous_personal_best_flower.id
@@ -351,32 +349,42 @@ class Bee(BaseObject):
             and not self.personal_best_flower.is_pollinated
         ):
 
-            # Freeze the bee if it's in pollination range and has room for another bee
+            # If the bee is attached already or there's room around the flower for
+            # the bee, pollinate it
             if (
                 self.is_attached
                 or self.personal_best_flower.nearby_bees_count < MAX_NEARBY_BEES
             ):
+
+                # Attach the bee if it wasn't attached already
                 if not self.is_attached:
                     self.personal_best_flower.nearby_bees_count += 1
                     self.is_attached = True
 
                 self.personal_best_flower.pollinate()
+
+            # If the flower is full and the bee wasn't attached to it, find
+            # a new flower
             else:
                 self.reset_motive()
 
-        # Reset the bee's velocity if the flower becomes pollinated
+        # Reset the bee's motive if the flower becomes pollinated or its
+        # personal best flower is full
         if self.personal_best_flower.is_pollinated or (
             not self.is_attached
             and self.personal_best_flower.nearby_bees_count >= MAX_NEARBY_BEES
         ):
             self.reset_motive()
 
+    # Process communication from nearby bees
     def detect_nearby_bees(self, bees: list["Bee"]):
 
         # Search for the nearest bee
         self.social = None
         self.social_flower = None
         for bee in bees:
+
+            # Ignore the bee if it's the current bee
             if self.id == bee.id:
                 continue
 
@@ -384,6 +392,8 @@ class Bee(BaseObject):
             if distance > SOCIAL_RANGE:
                 continue
 
+            # If the bee is in range, get the best of its personal best or global best
+            # flowers
             if (
                 self.social is None
                 or (SOCIAL_SCENT_COEFFICIENT * distance) < self.social
@@ -423,10 +433,7 @@ class Bee(BaseObject):
             self.global_best_flower.nearby_bees_count >= MAX_NEARBY_BEES
             and not self.is_attached
         ):
-            self.global_best = float("inf")
-            self.global_best_flower = None
-            if self.velocity.magnitude == 0:
-                self.velocity = random_velocity()
+            self.reset_global_best()
 
 
 class Flower(BaseObject):
@@ -440,14 +447,12 @@ class Flower(BaseObject):
             0,
             random.uniform(0, math.radians(90)),
         )
-        self.is_pollinated = None
-        self.pod_color = None
-        self.blue = (0.0, 0.0, 1.0, 1.0)
-        self.yellow = (1.0, 1.0, 0.0, 1.0)
-        self.pollination_count = 0
-        self.pos = self.obj.matrix_world.translation.copy()
-        self.nearby_bees_count = 0
-        self.depollinate()
+        self.is_pollinated: bool = False
+        self.pollination_count: int = 0
+        self.nearby_bees_count: int = 0
+        self.blue: tuple[int] = (0.0, 0.0, 1.0, 1.0)
+        self.yellow: tuple[int] = (1.0, 1.0, 0.0, 1.0)
+        self.pos: Vector = self.obj.matrix_world.translation.copy()
 
     def clear_animation_data(self):
         material = self.obj.active_material
@@ -456,6 +461,8 @@ class Flower(BaseObject):
 
         super().clear_animation_data()
 
+    # Iterate the flower's pollination count and set it to pollinated
+    # if its pollination count reaches the threshold
     def pollinate(self):
         if self.is_pollinated:
             return
@@ -463,14 +470,18 @@ class Flower(BaseObject):
         self.pollination_count += 1
         self.is_pollinated = self.pollination_count >= POLLINATION_THRESHOLD
 
+    # Set the pollination to false
     def depollinate(self):
         self.is_pollinated = False
 
     def update(self):
+
+        # Update the pod color to reflect pollination
         color = self.yellow if self.is_pollinated else self.blue
         self.find_child("Pod").set_color(color)
 
 
+# Clear all animation data from all objects
 def clear_all_animation_data():
     # Clear animation data from all objects
     for obj in bpy.data.objects:
@@ -499,12 +510,19 @@ bees = [Bee(obj) for obj in bpy.data.objects if obj.name.startswith("Bee")]
 flowers = [Flower(obj) for obj in bpy.data.objects if obj.name.startswith("Flower")]
 
 for frame in range(1, FRAME_COUNT, FRAME_STEP):
+
+    # Set the global frame
     bpy.context.scene.frame_set(frame)
+
+    # Don't do anything if within the initial pause
     if frame <= INITIAL_PAUSE_FRAMES:
         continue
 
+    # Update bees
     for bee in bees:
         bee.update(bees, flowers)
+
+        # Transition bee state if necessary
         if frame >= START_SWARMING_FRAME and bee.action != "swarming":
             bee.transition_action()
         elif (
@@ -513,5 +531,6 @@ for frame in range(1, FRAME_COUNT, FRAME_STEP):
         ):
             bee.transition_action()
 
+    # Update flowers
     for flower in flowers:
         flower.update()
