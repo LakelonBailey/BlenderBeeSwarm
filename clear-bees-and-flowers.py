@@ -23,5 +23,3 @@ for item in default_animated_items:
     obj = bpy.data.objects.get(item)
     if obj.animation_data:
         obj.animation_data_clear()
-    if obj.animation_data:
-        obj.animation_data_clear()
